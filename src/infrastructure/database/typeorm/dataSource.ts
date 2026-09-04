@@ -17,7 +17,8 @@ import {
 
 const databaseUrl = process.env.DATABASE_URL || 'postgresql://postgres:0000@localhost:5432/icertix_db';
 const isProduction = process.env.NODE_ENV === 'production';
-const enableSsl = process.env.DB_SSL === 'true' || (isProduction && !databaseUrl.includes('localhost') && !databaseUrl.includes('127.0.0.1'));
+const isLocalOrDocker = databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1') || databaseUrl.includes('@postgres:') || databaseUrl.includes('@postgres/');
+const enableSsl = process.env.DB_SSL === 'true' || (isProduction && process.env.DB_SSL !== 'false' && !isLocalOrDocker);
 
 export const AppDataSource = new DataSource({
   type: 'postgres',
