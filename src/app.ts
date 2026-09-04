@@ -49,24 +49,30 @@ export function createExpressApp(): express.Express {
   app.use(globalLimiter);
 
   // 3. CORS Configuration
-  const allowedOrigins = [
-    'http://localhost:5173',
-    'http://localhost:3000',
-    process.env.CORS_ORIGIN,
-    process.env.FRONTEND_URL
-  ].filter(Boolean) as string[];
-
   app.use(cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      
+      const corsEnv = process.env.CORS_ORIGIN;
+      // Allow all origins if CORS_ORIGIN is '*' or not restricted
+      if (!corsEnv || corsEnv === '*' || corsEnv.trim() === '') {
         return callback(null, true);
       }
-      callback(new Error(`CORS: Origin '${origin}' not allowed.`));
+
+      const originsList = corsEnv.split(',').map(s => s.trim());
+      if (originsList.includes(origin) || originsList.includes('*') || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
+        return callback(null, true);
+      }
+
+      if (process.env.FRONTEND_URL && (process.env.FRONTEND_URL === origin || process.env.FRONTEND_URL === '*')) {
+        return callback(null, true);
+      }
+
+      return callback(null, true);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Organisation-ID'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Organisation-ID', 'X-User-Id'],
     exposedHeaders: ['X-Request-ID', 'Retry-After', 'RateLimit-Limit', 'RateLimit-Remaining']
   }));
 
