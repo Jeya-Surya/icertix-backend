@@ -5,6 +5,8 @@
 import { Router, Response } from 'express';
 import { AuthenticatedRequest, authMiddleware } from '../../common/middleware/authMiddleware';
 import { AppRepositories } from '../../infrastructure/database';
+import { cacheService } from '../../infrastructure/cache/CacheService';
+import { webhookService } from '../../infrastructure/webhooks/WebhookService';
 import { sendSuccess, sendError, sendPaginated } from '../../common/utils/apiResponse';
 import { assertRequired } from '../../common/validators';
 
@@ -68,6 +70,19 @@ credentialsRouter.post('/:id/revoke', async (req: AuthenticatedRequest, res: Res
     }
 
     const revoked = await AppRepositories.credentials.revoke(req.params.id, reason, req.user?.id || 'USR_001');
+
+    // Invalidate cached verification and standards lookups
+    cacheService.invalidateCredential(req.params.id);
+
+    // Dispatch outbound webhook
+    webhookService.dispatch(existing.organisationId, 'credential.revoked', {
+      credentialId: existing.id,
+      certificateNumber: existing.certificateNumber,
+      candidateId: existing.candidateId,
+      candidateName: existing.candidateName,
+      revocationReason: reason,
+      revokedAt: new Date().toISOString(),
+    }).catch(() => {});
 
     await AppRepositories.auditLogs.create({
       id: `AUD-${Date.now().toString().slice(-4)}`,

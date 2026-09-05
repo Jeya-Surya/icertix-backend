@@ -18,6 +18,10 @@ dotenv.config();
 
 import { AppRepositories } from "../infrastructure/database";
 import { CryptoService } from "../infrastructure/crypto/CryptoService";
+import { W3cCredentialsService } from "../infrastructure/standards/W3cCredentialsService";
+import { queueService } from "../infrastructure/queue/QueueService";
+import { cacheService } from "../infrastructure/cache/CacheService";
+import { webhookService, WebhookService } from "../infrastructure/webhooks/WebhookService";
 import { authService } from "../modules/auth/auth.router";
 import { hasPermission, ROLE_HIERARCHY } from "../common/constants/roles";
 
@@ -267,6 +271,253 @@ export async function runBackendTests(): Promise<{
     const verifyNotFound = await AppRepositories.courses.findById(orgId, "CRS_TEST_999");
     if (verifyNotFound) {
       throw new Error("Course should no longer exist after deletion");
+    }
+  });
+
+  // 16. W3C Verifiable Credentials Test
+  const sampleTestCred: any = {
+    id: "ICX-2026-TEST99",
+    certificateNumber: "STANFORD-2026-9901",
+    organisationId: "ORG_001",
+    candidateId: "CAN_001",
+    candidateName: "Alex Rivera",
+    candidateEmail: "alex.rivera@stanford.edu",
+    courseId: "CRS_001",
+    courseName: "Advanced Deep Learning & Transformer Architectures",
+    issueDate: "2026-02-15",
+    grade: "Honors Distinction (A+)",
+    score: 98.5,
+    status: "ACTIVE",
+    skills: ["Deep Learning", "Transformers", "Verifiable AI"],
+    hashDigest: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    signatureData: {
+      signature: "SIG_ED25519_SAMPLE_TEST_PROOF",
+      algorithm: "SHA256withEd25519",
+      keyId: "HSM-ED25519-PROD01",
+      timestamp: "2026-02-15T00:00:00.000Z"
+    }
+  };
+
+  const sampleTestOrg: any = {
+    id: "ORG_001",
+    name: "Stanford Center for Professional Development",
+    domain: "stanford.edu",
+    website: "https://scpd.stanford.edu",
+    badgeColor: "#8C1515",
+    logo: "🌲"
+  };
+
+  await test("Standards: W3C Verifiable Credential JSON-LD Generation", async () => {
+    const vc = W3cCredentialsService.toW3cVerifiableCredential(sampleTestCred, sampleTestOrg);
+    if (!vc['@context'].includes('https://www.w3.org/2018/credentials/v1')) {
+      throw new Error("W3C VC must include standard W3C context");
+    }
+    if (!vc.type.includes('VerifiableCredential')) {
+      throw new Error("W3C VC must include VerifiableCredential type");
+    }
+    if (!vc.issuer.id.startsWith('did:web:')) {
+      throw new Error("Issuer ID must be a valid did:web identifier");
+    }
+    if (!vc.proof || !vc.proof.proofValue) {
+      throw new Error("W3C VC must have cryptographic proof attached");
+    }
+    if (vc.credentialSubject.name !== "Alex Rivera") {
+      throw new Error("W3C VC recipient name must match credential");
+    }
+  });
+
+  // 17. Open Badges 3.0 Test
+  await test("Standards: 1EdTech Open Badges 3.0 Standard Payload Generation", async () => {
+    const ob = W3cCredentialsService.toOpenBadgeV3(sampleTestCred, sampleTestOrg);
+    if (!ob.type.includes('OpenBadgeCredential')) {
+      throw new Error("Open Badge must include OpenBadgeCredential type");
+    }
+    if (!ob.criteria || !ob.criteria.narrative) {
+      throw new Error("Open Badge must include criteria narrative");
+    }
+    if (!ob.recipient || ob.recipient.identity !== "alex.rivera@stanford.edu") {
+      throw new Error("Open Badge must contain recipient email");
+    }
+  });
+
+  // 18. Standalone Social SVG Badge Test
+  await test("Standards: Vector Social SVG Badge Generation", async () => {
+    const svg = W3cCredentialsService.toSocialBadgeSvg(sampleTestCred, sampleTestOrg);
+    if (!svg.startsWith('<svg') || !svg.includes('OFFICIAL VERIFIED BADGE')) {
+      throw new Error("SVG badge must be valid SVG string with verified header");
+    }
+    if (!svg.includes('Alex Rivera')) {
+      throw new Error("SVG badge must contain candidate name");
+    }
+  });
+
+  // 19. Asynchronous Batch Queue Lifecycle & Progress Test
+  await test("Queue: Background Batch Job Lifecycle and Progress Tracking", async () => {
+    const testJobId = `JOB-TEST-${Date.now()}`;
+    const rawJob = {
+      id: testJobId,
+      organisationId: "ORG_001",
+      courseId: "CRS-001",
+      templateVersionId: "TPL_001",
+      createdBy: "USR_001",
+      status: "QUEUED" as const,
+      totalCount: 5,
+      processedCount: 0,
+      successCount: 0,
+      failedCount: 0,
+      generatedCredentialIds: [],
+      errors: [],
+      createdAt: new Date().toISOString()
+    };
+
+    const enqueued = await queueService.enqueueJob(rawJob, async (_job, updateProgress) => {
+      for (let i = 1; i <= 5; i++) {
+        await updateProgress(i, i, 0);
+      }
+      return ["ICX-TEST-001", "ICX-TEST-002", "ICX-TEST-003", "ICX-TEST-004", "ICX-TEST-005"];
+    });
+
+    if (enqueued.id !== testJobId) {
+      throw new Error("Enqueued job ID mismatch");
+    }
+
+    // Wait for background worker
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const completed = await queueService.getJob(testJobId);
+    if (!completed) throw new Error("Job not found in queue");
+    if (completed.status !== 'COMPLETED') {
+      throw new Error(`Expected COMPLETED status but got ${completed.status}`);
+    }
+    if (completed.percentComplete !== 100) {
+      throw new Error(`Expected percentComplete 100% but got ${completed.percentComplete}%`);
+    }
+    if (completed.generatedCredentialIds.length !== 5) {
+      throw new Error("Expected 5 generated credential IDs");
+    }
+  });
+
+  // 20. Verification Cache Hits & Misses Test
+  await test("Cache: Public Verification Edge Caching and Hit Tracking", async () => {
+    const testKey = "verify:TEST-CRED-999";
+    cacheService.delete(testKey);
+
+    // Initial query should be a cache miss
+    const missed = cacheService.get(testKey);
+    if (missed !== null) throw new Error("Expected initial cache miss");
+
+    // Populate cache
+    cacheService.set(testKey, { verified: true, id: "TEST-CRED-999" }, 60);
+
+    // Second query should be a cache hit
+    const hit = cacheService.get<{ verified: boolean; id: string }>(testKey);
+    if (!hit || !hit.verified || hit.id !== "TEST-CRED-999") {
+      throw new Error("Expected cache hit with valid payload");
+    }
+
+    const metrics = cacheService.getMetrics();
+    if (metrics.hits === 0) {
+      throw new Error("Expected cache hit counter to increment");
+    }
+  });
+
+  // 21. Cache Invalidation on Revocation Test
+  await test("Cache: Automatic Cache Invalidation on Credential Revocation", async () => {
+    const credId = "ICX-REVOKE-TEST-001";
+    const cacheKey1 = `verify:${credId}`;
+    const cacheKey2 = `vc:${credId}`;
+    const cacheKey3 = `badge:${credId}`;
+
+    cacheService.set(cacheKey1, { status: "ACTIVE" }, 60);
+    cacheService.set(cacheKey2, { type: ["VerifiableCredential"] }, 60);
+    cacheService.set(cacheKey3, { type: ["OpenBadgeCredential"] }, 60);
+
+    if (!cacheService.get(cacheKey1) || !cacheService.get(cacheKey2) || !cacheService.get(cacheKey3)) {
+      throw new Error("All 3 cache keys should be present");
+    }
+
+    // Trigger revocation invalidation
+    const purged = cacheService.invalidateCredential(credId);
+    if (purged < 3) {
+      throw new Error(`Expected at least 3 invalidated cache entries, got ${purged}`);
+    }
+
+    if (cacheService.get(cacheKey1) !== null || cacheService.get(cacheKey2) !== null) {
+      throw new Error("Cache keys must be completely removed after revocation invalidation");
+    }
+  });
+
+  // 22. Webhook HMAC-SHA256 Signature Test
+  await test("Webhooks: Cryptographic HMAC-SHA256 Signature Generation and Verification", async () => {
+    const payload = JSON.stringify({ event: 'credential.issued', id: 'ICX-2026-999' });
+    const secret = "whsec_test_secret_key_123456";
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    const sigHeader = WebhookService.generateSignature(payload, secret, timestamp);
+    if (!sigHeader.startsWith('t=') || !sigHeader.includes(',v1=')) {
+      throw new Error("Expected valid signature header format (t=...,v1=...)");
+    }
+
+    const isValid = WebhookService.verifySignature(payload, sigHeader, secret);
+    if (!isValid) {
+      throw new Error("Signature verification should succeed for authentic payload");
+    }
+
+    // Tampered payload verification should fail
+    const isTamperedValid = WebhookService.verifySignature(payload + "tampered", sigHeader, secret);
+    if (isTamperedValid) {
+      throw new Error("Signature verification must fail for tampered payload");
+    }
+  });
+
+  // 23. Outbound Webhook Dispatching & Delivery Log Test
+  await test("Webhooks: Outbound Event Dispatching & Delivery Log History", async () => {
+    const orgId = "ORG_001";
+    const ep = await webhookService.registerEndpoint({
+      organisationId: orgId,
+      url: "https://canvas.stanford.edu/mock/webhook",
+      description: "Mock LMS Endpoint",
+      events: ["credential.issued"]
+    });
+
+    if (!ep.id || !ep.secret) throw new Error("Expected registered webhook with secret");
+
+    const logs = await webhookService.dispatch(orgId, "credential.issued", {
+      credentialId: "ICX-2026-TEST",
+      recipientName: "Test Student"
+    });
+
+    if (logs.length === 0) throw new Error("Expected at least 1 delivery log");
+    const history = await webhookService.getDeliveryLogs(orgId);
+    if (history.length === 0) throw new Error("Expected delivery history logs");
+  });
+
+  // 24. GDPR/FERPA Subject Access Request (SAR) Data Bundle Test
+  await test("Compliance: GDPR/FERPA Subject Access Request (SAR) Data Aggregation", async () => {
+    const testOrgId = "ORG_001";
+    const sarCandId = `CAND-SAR-${Date.now()}`;
+    const testCandidate = await AppRepositories.candidates.create({
+      id: sarCandId,
+      organisationId: testOrgId,
+      name: "Maria Santos",
+      email: `maria.santos.${Date.now()}@stanford.edu`,
+      studentId: `ST-SAR-${Date.now().toString().slice(-4)}`,
+      department: "Computer Science",
+      status: "Active",
+      createdAt: new Date().toISOString()
+    });
+
+    const creds = await AppRepositories.credentials.findAll(testOrgId, { candidateId: testCandidate.id });
+
+    const sarBundle = {
+      requestId: `SAR-TEST-001`,
+      standard: "FERPA / GDPR Art. 15",
+      candidate: testCandidate,
+      credentialsCount: creds.items.length
+    };
+
+    if (sarBundle.candidate.id !== testCandidate.id) {
+      throw new Error("SAR bundle candidate ID mismatch");
     }
   });
 

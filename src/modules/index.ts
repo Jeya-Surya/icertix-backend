@@ -12,3 +12,5 @@ export * from './subscriptions/subscriptions.router';
 export * from './templates/templates.router';
 export * from './users/users.router';
 export * from './verification/verification.router';
+export * from './jobs/jobs.router';
+export * from './webhooks/webhooks.router';

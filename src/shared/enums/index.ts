@@ -18,7 +18,7 @@ export type CredentialStatus =
 
 export type PlanTier = 'Free' | 'Professional' | 'Enterprise';
 
-export type JobStatus = 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'RETRYING';
+export type JobStatus = 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'RETRYING' | 'CANCELLED';
 
 export type EmailDeliveryStatus = 'Queued' | 'Sent' | 'Delivered' | 'Opened' | 'Bounced' | 'Failed';
 

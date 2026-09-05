@@ -1,75 +1,82 @@
 /**
- * iCertiX - Production Rate Limiting Middleware
- * Protects endpoints from brute-force authentication attempts, DDoS, and API scraping.
+ * iCertiX — Enterprise Rate Limiting & DoS Protection Middleware
+ * 
+ * Provides granular sliding-window rate limiters with unified error envelopes.
  */
 
 import rateLimit from 'express-rate-limit';
 import { Request, Response } from 'express';
+import { sendError } from '../utils/apiResponse';
 
-export const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'test' ? 10000 : 1000,
+/**
+ * Standard error response handler for rate limiter violations
+ */
+function createRateLimitHandler(message: string, code: string) {
+  return (req: Request, res: Response) => {
+    const requestId = (req as any).requestId || `REQ-${Date.now().toString(36).toUpperCase()}`;
+    return sendError(
+      res,
+      message,
+      429,
+      code,
+      {
+        retryAfterSeconds: Math.ceil(
+          (req as any).rateLimit?.resetTime
+            ? ((req as any).rateLimit.resetTime.getTime() - Date.now()) / 1000
+            : 60
+        )
+      },
+      requestId
+    );
+  };
+}
+
+/**
+ * Global API rate limiter: 600 requests per minute per IP
+ */
+export const globalApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: process.env.NODE_ENV === 'test' ? 10000 : 600,
   standardHeaders: true,
   legacyHeaders: false,
-  message: {
-    success: false,
-    error: {
-      code: 'RATE_LIMIT_EXCEEDED',
-      message: 'Too many requests from this IP. Please try again in 15 minutes.'
-    }
-  },
-  handler: (_req: Request, res: Response, _next, options) => {
-    res.status(options.statusCode).json(options.message);
-  }
+  handler: createRateLimitHandler('Too many requests. Please slow down and try again shortly.', 'RATE_LIMIT_EXCEEDED'),
+  skip: (req: Request) => req.path.startsWith('/api/health')
 });
 
+/**
+ * Auth rate limiter: 15 requests per 15 minutes per IP (protects login & token endpoints)
+ */
 export const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'test' ? 1000 : 20,
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'test' ? 10000 : 15,
   standardHeaders: true,
   legacyHeaders: false,
-  message: {
-    success: false,
-    error: {
-      code: 'AUTH_RATE_LIMIT_EXCEEDED',
-      message: 'Too many login attempts from this IP. Please try again in 15 minutes.'
-    }
-  },
-  handler: (_req: Request, res: Response, _next, options) => {
-    res.status(options.statusCode).json(options.message);
-  }
+  handler: createRateLimitHandler('Too many login attempts. Please wait 15 minutes before trying again.', 'AUTH_RATE_LIMIT_EXCEEDED')
 });
 
-export const verifyLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: process.env.NODE_ENV === 'test' ? 1000 : 60,
+/**
+ * Public verification rate limiter: 120 requests per minute per IP (prevents scraping)
+ */
+export const publicVerificationLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: process.env.NODE_ENV === 'test' ? 10000 : 120,
   standardHeaders: true,
   legacyHeaders: false,
-  message: {
-    success: false,
-    error: {
-      code: 'VERIFY_RATE_LIMIT_EXCEEDED',
-      message: 'Verification rate limit exceeded. Please wait a minute before verifying more certificates.'
-    }
-  },
-  handler: (_req: Request, res: Response, _next, options) => {
-    res.status(options.statusCode).json(options.message);
-  }
+  handler: createRateLimitHandler('Public verification rate limit reached. Please wait a moment.', 'VERIFY_RATE_LIMIT_EXCEEDED')
 });
 
-export const generationLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: process.env.NODE_ENV === 'test' ? 1000 : 30,
+/**
+ * Batch issuance rate limiter: 30 requests per minute per IP/tenant
+ */
+export const batchIssuanceLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: process.env.NODE_ENV === 'test' ? 10000 : 30,
   standardHeaders: true,
   legacyHeaders: false,
-  message: {
-    success: false,
-    error: {
-      code: 'GENERATION_RATE_LIMIT_EXCEEDED',
-      message: 'Certificate generation rate limit reached. Please wait a minute.'
-    }
-  },
-  handler: (_req: Request, res: Response, _next, options) => {
-    res.status(options.statusCode).json(options.message);
-  }
+  handler: createRateLimitHandler('Batch certificate issuance rate limit reached. Please stagger requests.', 'BATCH_RATE_LIMIT_EXCEEDED')
 });
+
+// Backward-compatibility aliases
+export const globalLimiter = globalApiLimiter;
+export const verifyLimiter = publicVerificationLimiter;
+export const generationLimiter = batchIssuanceLimiter;

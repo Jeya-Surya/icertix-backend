@@ -159,3 +159,91 @@ candidatesRouter.delete('/:id', async (req: AuthenticatedRequest, res: Response)
     return sendError(res, err.message);
   }
 });
+
+// GET /api/candidates/:id/gdpr-export - GDPR/FERPA Subject Access Request (SAR) Data Export
+candidatesRouter.get('/:id/gdpr-export', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const orgId = req.tenantId || 'ORG_001';
+    const candidate = await AppRepositories.candidates.findById(orgId, req.params.id);
+    if (!candidate) return sendError(res, 'Candidate not found.', 404);
+
+    const credsResult = await AppRepositories.credentials.findAll(orgId, { candidateId: candidate.id });
+    const studentCredentials = credsResult.items || [];
+
+    const sarBundle = {
+      subjectAccessRequest: {
+        requestId: `SAR-${Date.now()}`,
+        generatedAt: new Date().toISOString(),
+        regulationStandard: 'FERPA 34 CFR 99 / GDPR Article 15',
+        candidateProfile: candidate,
+        issuedCredentials: studentCredentials,
+        totalCredentials: studentCredentials.length,
+        cryptographicProofLedger: studentCredentials.map((c) => ({
+          id: c.id,
+          certificateNumber: c.certificateNumber,
+          courseName: c.courseName,
+          issueDate: c.issueDate,
+          status: c.status,
+          hashDigest: c.hashDigest,
+          signatureData: c.signatureData,
+          verificationUrl: c.verificationUrl,
+        })),
+      },
+    };
+
+    await AppRepositories.auditLogs.create({
+      id: `AUD-${Date.now().toString().slice(-4)}`,
+      organisationId: orgId,
+      actorId: req.user?.id,
+      actor: req.user?.name || 'Administrator',
+      actorRole: req.user?.role,
+      action: 'GDPR_SAR_EXPORTED',
+      targetType: 'Candidate',
+      targetId: candidate.id,
+      details: `Exported complete GDPR/FERPA SAR archive for ${candidate.name} (${candidate.email}).`,
+      ipAddress: req.ip || '127.0.0.1',
+      timestamp: new Date().toISOString(),
+    });
+
+    return sendSuccess(res, sarBundle);
+  } catch (err: any) {
+    return sendError(res, err.message);
+  }
+});
+
+// POST /api/candidates/:id/anonymize - Right-to-be-forgotten PII Pseudonymization
+candidatesRouter.post('/:id/anonymize', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const orgId = req.tenantId || 'ORG_001';
+    const candidate = await AppRepositories.candidates.findById(orgId, req.params.id);
+    if (!candidate) return sendError(res, 'Candidate not found.', 404);
+
+    const pseudonym = `ANON-${Date.now().toString(36).toUpperCase()}`;
+    const anonymized = await AppRepositories.candidates.update(orgId, req.params.id, {
+      name: `Former Student ${pseudonym}`,
+      email: `redacted-${pseudonym.toLowerCase()}@privacy.local`,
+    });
+
+    await AppRepositories.auditLogs.create({
+      id: `AUD-${Date.now().toString().slice(-4)}`,
+      organisationId: orgId,
+      actorId: req.user?.id,
+      actor: req.user?.name || 'Administrator',
+      actorRole: req.user?.role,
+      action: 'CANDIDATE_PII_ANONYMIZED',
+      targetType: 'Candidate',
+      targetId: candidate.id,
+      details: `Pseudonymized candidate PII under GDPR Article 17 Right to Erasure. Pseudonym: ${pseudonym}.`,
+      ipAddress: req.ip || '127.0.0.1',
+      timestamp: new Date().toISOString(),
+    });
+
+    return sendSuccess(res, {
+      anonymized: true,
+      pseudonym,
+      candidate: anonymized,
+    });
+  } catch (err: any) {
+    return sendError(res, err.message);
+  }
+});

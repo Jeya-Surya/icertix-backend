@@ -8,6 +8,7 @@ import { AppRepositories } from '../../infrastructure/database';
 import { CryptoService } from '../../infrastructure/crypto/CryptoService';
 import { certificateRenderer } from '../../infrastructure/renderer/CertificateRenderer';
 import { emailService } from '../../infrastructure/email/EmailService';
+import { webhookService } from '../../infrastructure/webhooks/WebhookService';
 import { sendSuccess, sendError, sendPaginated } from '../../common/utils/apiResponse';
 import { assertRequired } from '../../common/validators';
 import { Credential, CertificateJob } from '../../shared/types';
@@ -227,6 +228,17 @@ certificatesRouter.post('/generate', async (req: AuthenticatedRequest, res: Resp
         total: org.certificateQuota.total
       }
     });
+
+    // Dispatch Outbound Webhook Event
+    webhookService.dispatch(orgId, 'batch.completed', {
+      jobId,
+      courseId: course.id,
+      courseName: course.name,
+      totalCount: candidateIds.length,
+      successCount: generatedCredentials.length,
+      credentialIds: generatedCredentials.map(c => c.id),
+      issuedAt: new Date().toISOString()
+    }).catch(() => {});
 
     // Record Audit Log
     await AppRepositories.auditLogs.create({

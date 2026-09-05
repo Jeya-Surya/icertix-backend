@@ -29,8 +29,11 @@ import {
   emailsRouter,
   auditRouter,
   reportsRouter,
-  subscriptionsRouter
+  subscriptionsRouter,
+  jobsRouter,
+  webhooksRouter
 } from './modules';
+import { cacheService } from './infrastructure/cache/CacheService';
 
 export function createExpressApp(): express.Express {
   const app = express();
@@ -108,6 +111,25 @@ export function createExpressApp(): express.Express {
     });
   });
 
+  // Deep Readiness Probe (for Kubernetes / AWS ECS / Staging Probes)
+  app.get('/api/health/ready', async (_req, res) => {
+    const memory = process.memoryUsage();
+    res.json({
+      status: 'ready',
+      service: 'iCertiX Enterprise Credential Engine',
+      version: '3.0.0',
+      uptimeSeconds: Math.floor(process.uptime()),
+      memory: {
+        rssMb: Math.round(memory.rss / (1024 * 1024)),
+        heapUsedMb: Math.round(memory.heapUsed / (1024 * 1024)),
+        heapTotalMb: Math.round(memory.heapTotal / (1024 * 1024))
+      },
+      cache: cacheService.getMetrics(),
+      environment: process.env.NODE_ENV || 'development',
+      timestamp: new Date().toISOString()
+    });
+  });
+
   // 8. Public Verifier (Protected with verify rate limiter)
   app.use('/api/public/verify', verifyLimiter, verificationRouter);
 
@@ -123,7 +145,9 @@ export function createExpressApp(): express.Express {
   app.use('/api/departments', departmentsRouter);
   app.use('/api/templates', templatesRouter);
   app.use('/api/certificates', generationLimiter, certificatesRouter);
+  app.use('/api/jobs', jobsRouter);
   app.use('/api/credentials', credentialsRouter);
+  app.use('/api/webhooks', webhooksRouter);
   app.use('/api/emails', emailsRouter);
   app.use('/api/audit', auditRouter);
   app.use('/api/reports', reportsRouter);
