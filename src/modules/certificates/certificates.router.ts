@@ -208,10 +208,14 @@ certificatesRouter.post('/generate', async (req: AuthenticatedRequest, res: Resp
         organisationId: org.id,
         credentialId: cred.id,
         recipientEmail: candidate.email,
-        recipientName: candidate.name,
-        subject: `Your ${org.name} Official Digital Certificate is Ready`,
-        htmlBody: `<p>Dear ${candidate.name}, your certificate for ${course.name} is now available.</p>`
-      });
+        candidateName: candidate.name,
+        courseName: course.name,
+        organisationName: org.name,
+        certificateNumber: cred.certificateNumber,
+        verificationUrl: cred.verificationUrl || `https://app.icertix.io/verify/${cred.id}`,
+        issueDate: cred.issueDate,
+        grade: cred.grade,
+      }).catch((err: any) => console.warn(`[Certificates] Email dispatch failed for ${candidate.email}:`, err.message));
     }
 
     job.status = 'COMPLETED';

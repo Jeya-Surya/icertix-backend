@@ -5,6 +5,7 @@
 import { Router, Response } from 'express';
 import { AuthenticatedRequest, authMiddleware } from '../../common/middleware/authMiddleware';
 import { AppRepositories } from '../../infrastructure/database';
+import { emailService } from '../../infrastructure/email/EmailService';
 import { sendSuccess, sendError, sendPaginated } from '../../common/utils/apiResponse';
 import { assertRequired, assertEmail } from '../../common/validators';
 import { Candidate } from '../../shared/types';
@@ -66,6 +67,17 @@ candidatesRouter.post('/', async (req: AuthenticatedRequest, res: Response) => {
 
     const created = await AppRepositories.candidates.create(newCandidate);
 
+    const org = await AppRepositories.organisations.findById(orgId);
+    const clientOrigin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+
+    emailService.sendCandidateWelcomeEmail(email, {
+      name,
+      organisationName: org?.name || 'Academic Institution',
+      studentId: newCandidate.studentId || newCandidate.id,
+      claimUrl: `${clientOrigin}/claim-account`,
+      organisationId: orgId,
+    }).catch((err: any) => console.warn(`[Candidates] Welcome email failed for ${email}:`, err.message));
+
     await AppRepositories.auditLogs.create({
       id: `AUD-${Date.now().toString().slice(-4)}`,
       organisationId: orgId,
@@ -116,6 +128,22 @@ candidatesRouter.post('/import', async (req: AuthenticatedRequest, res: Response
     }
 
     const saved = await AppRepositories.candidates.bulkCreate(createdList);
+
+    const org = await AppRepositories.organisations.findById(orgId);
+    const clientOrigin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+
+    // Send onboarding emails to imported candidates in background
+    for (const cand of saved) {
+      if (cand.email) {
+        emailService.sendCandidateWelcomeEmail(cand.email, {
+          name: cand.name,
+          organisationName: org?.name || 'Academic Institution',
+          studentId: cand.studentId || cand.id,
+          claimUrl: `${clientOrigin}/claim-account`,
+          organisationId: orgId,
+        }).catch(() => {});
+      }
+    }
 
     await AppRepositories.auditLogs.create({
       id: `AUD-${Date.now().toString().slice(-4)}`,

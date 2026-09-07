@@ -7,6 +7,7 @@ import { Router, Response } from 'express';
 import { AuthenticatedRequest, authMiddleware } from '../../common/middleware/authMiddleware';
 import { requireRole } from '../../common/middleware/rbacGuard';
 import { AppRepositories } from '../../infrastructure/database';
+import { emailService } from '../../infrastructure/email/EmailService';
 import { sendSuccess, sendError, sendPaginated } from '../../common/utils/apiResponse';
 import { assertRequired } from '../../common/validators';
 import { AuthUser, Organisation, SubscriptionPlan } from '../../shared/types';
@@ -455,7 +456,24 @@ platformAdminRouter.post('/users', async (req: AuthenticatedRequest, res: Respon
       lastLogin: undefined
     };
 
-    const created = await AppRepositories.users.create(newUser, password || 'password123');
+    const initialPassword = password || `Pass_${Math.floor(100000 + Math.random() * 900000)}`;
+    const created = await AppRepositories.users.create(newUser, initialPassword);
+
+    const clientOrigin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+    let orgName = 'iCertiX Sovereign Network';
+    if (newUser.organisationId) {
+      const org = await AppRepositories.organisations.findById(newUser.organisationId);
+      if (org) orgName = org.name;
+    }
+
+    emailService.sendUserInviteEmail(email, {
+      name,
+      organisationName: orgName,
+      role,
+      loginUrl: `${clientOrigin}/login`,
+      temporaryPassword: initialPassword,
+      organisationId: newUser.organisationId || undefined,
+    }).catch((err: any) => console.warn(`[PlatformAdmin] User invite email failed for ${email}:`, err.message));
 
     await AppRepositories.auditLogs.create({
       id: `AUD-${Date.now().toString().slice(-4)}`,
@@ -736,20 +754,10 @@ platformAdminRouter.patch('/settings', async (req: AuthenticatedRequest, res: Re
 // POST /api/platform/emails/resend
 platformAdminRouter.post('/emails/resend', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { emailId, credentialId } = req.body;
+    const { credentialId, recipientEmail, recipientName } = req.body;
     assertRequired(req.body, ['credentialId']);
 
-    const newLog = await AppRepositories.emailLogs.create({
-      id: `EML-${Date.now().toString().slice(-6)}`,
-      organisationId: req.tenantId || 'ORG_001',
-      credentialId,
-      recipientEmail: req.body.recipientEmail || 'recipient@example.com',
-      recipientName: req.body.recipientName || 'Recipient',
-      subject: `[Resent] Your Verified Credential - ${credentialId}`,
-      status: 'Delivered',
-      sentAt: new Date().toISOString(),
-      createdAt: new Date().toISOString()
-    });
+    const newLog = await emailService.resendByCredential(credentialId, recipientEmail, recipientName);
 
     await AppRepositories.auditLogs.create({
       id: `AUD-${Date.now().toString().slice(-4)}`,

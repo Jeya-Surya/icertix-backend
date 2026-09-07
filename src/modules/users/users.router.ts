@@ -6,6 +6,7 @@ import { Router, Response } from 'express';
 import { AuthenticatedRequest, authMiddleware } from '../../common/middleware/authMiddleware';
 import { requireRole } from '../../common/middleware/rbacGuard';
 import { AppRepositories } from '../../infrastructure/database';
+import { emailService } from '../../infrastructure/email/EmailService';
 import { sendSuccess, sendError, sendPaginated } from '../../common/utils/apiResponse';
 import { assertRequired } from '../../common/validators';
 import { AuthUser } from '../../shared/types';
@@ -51,7 +52,20 @@ usersRouter.post('/', requireRole('SUPER_ADMIN', 'ORG_ADMIN'), async (req: Authe
       twoFactorEnabled: false
     };
 
-    const created = await AppRepositories.users.create(newUser, password || 'password123');
+    const initialPassword = password || `Pass_${Math.floor(100000 + Math.random() * 900000)}`;
+    const created = await AppRepositories.users.create(newUser, initialPassword);
+
+    const org = await AppRepositories.organisations.findById(targetOrgId);
+    const clientOrigin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+
+    emailService.sendUserInviteEmail(email, {
+      name,
+      organisationName: org?.name || 'Academic Institution',
+      role,
+      loginUrl: `${clientOrigin}/login`,
+      temporaryPassword: initialPassword,
+      organisationId: targetOrgId,
+    }).catch((err: any) => console.warn(`[Users] Failed to send invite email to ${email}:`, err.message));
 
     await AppRepositories.auditLogs.create({
       id: `AUD-${Date.now().toString().slice(-4)}`,

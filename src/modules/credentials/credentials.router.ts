@@ -7,6 +7,7 @@ import { AuthenticatedRequest, authMiddleware } from '../../common/middleware/au
 import { AppRepositories } from '../../infrastructure/database';
 import { cacheService } from '../../infrastructure/cache/CacheService';
 import { webhookService } from '../../infrastructure/webhooks/WebhookService';
+import { emailService } from '../../infrastructure/email/EmailService';
 import { sendSuccess, sendError, sendPaginated } from '../../common/utils/apiResponse';
 import { assertRequired } from '../../common/validators';
 
@@ -83,6 +84,20 @@ credentialsRouter.post('/:id/revoke', async (req: AuthenticatedRequest, res: Res
       revocationReason: reason,
       revokedAt: new Date().toISOString(),
     }).catch(() => {});
+
+    // Dispatch revocation email notification to recipient
+    if (existing.candidateEmail) {
+      const org = await AppRepositories.organisations.findById(existing.organisationId);
+      emailService.sendRevocationEmail({
+        organisationId: existing.organisationId,
+        recipientEmail: existing.candidateEmail,
+        candidateName: existing.candidateName || 'Candidate',
+        courseName: existing.courseName,
+        organisationName: org?.name || 'Academic Institution',
+        certificateNumber: existing.certificateNumber,
+        reason,
+      }).catch((err: any) => console.warn(`[Credentials] Revocation email failed for ${existing.candidateEmail}:`, err.message));
+    }
 
     await AppRepositories.auditLogs.create({
       id: `AUD-${Date.now().toString().slice(-4)}`,

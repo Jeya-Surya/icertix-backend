@@ -71,9 +71,15 @@ export class VectorCertificateRenderer implements ICertificateRenderer {
       const varKey = ((el as any).customVariableKey || el.fieldKey || el.name || 'field').trim();
 
       if (el.type === 'text' || el.type === 'dynamic-field') {
-        const textContent = isVar
-          ? (fieldMap[varKey] || (el.fieldKey && fieldMap[el.fieldKey]) || el.fallbackText || el.text || `{{${varKey}}}`)
-          : (el.text || '');
+        let textContent = el.text || '';
+        if (isVar) {
+          textContent = fieldMap[varKey] || (el.fieldKey && fieldMap[el.fieldKey]) || el.fallbackText || el.text || `{{${varKey}}}`;
+        } else if (textContent && (textContent.includes('{{') || textContent.includes('{'))) {
+          textContent = textContent.replace(/\{{1,2}([^}]+)\}{1,2}/g, (match, token) => {
+            const tk = token.trim();
+            return fieldMap[tk] !== undefined ? fieldMap[tk] : match;
+          });
+        }
 
         const fontSize = el.fontSize || 16;
         const color = el.color || '#0A2540';

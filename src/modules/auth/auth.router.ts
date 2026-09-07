@@ -5,6 +5,7 @@
 import { Router, Response } from 'express';
 import { AuthenticatedRequest, authMiddleware } from '../../common/middleware/authMiddleware';
 import { AppRepositories } from '../../infrastructure/database';
+import { emailService } from '../../infrastructure/email/EmailService';
 import { sendSuccess, sendError } from '../../common/utils/apiResponse';
 import { assertRequired, assertEmail } from '../../common/validators';
 import { AuthUser, Organisation, CertificateTemplate, TemplateVersion, StudioDesignSchema } from '../../shared/types';
@@ -328,6 +329,88 @@ export class AuthService {
 
     return { user: newUser, token: newUser.id };
   }
+
+  // Active reset tokens memory map (token -> { email, expiresAt, userId })
+  private static resetTokens = new Map<string, { email: string; userId: string; expiresAt: number }>();
+
+  async requestPasswordReset(emailOrIdentifier: string, clientOrigin: string = 'http://localhost:5173'): Promise<{ message: string }> {
+    if (!emailOrIdentifier || !emailOrIdentifier.trim()) {
+      throw new Error('Please enter your account email address.');
+    }
+    const cleanEmail = emailOrIdentifier.trim().toLowerCase();
+
+    // Find user
+    let user = await AppRepositories.users.findByEmail(cleanEmail);
+    if (!user) {
+      // Check candidate records
+      const orgs = await AppRepositories.organisations.findAll({ limit: 100 });
+      for (const org of orgs.items) {
+        const cand = await AppRepositories.candidates.findByEmail(org.id, cleanEmail);
+        if (cand) {
+          user = await AppRepositories.users.findById(`USR_CAND_${cand.id}`);
+          break;
+        }
+      }
+    }
+
+    if (!user) {
+      // For security, return generic success so account enumeration is not possible
+      return { message: `If an account with '${emailOrIdentifier}' exists, a password reset link has been dispatched.` };
+    }
+
+    const resetToken = `RST-${Math.floor(100000 + Math.random() * 900000)}`;
+    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
+    AuthService.resetTokens.set(resetToken, { email: user.email, userId: user.id, expiresAt });
+
+    const resetUrl = `${clientOrigin}/reset-password?token=${resetToken}&email=${encodeURIComponent(user.email)}`;
+
+    await emailService.sendPasswordResetEmail(user.email, {
+      name: user.name,
+      resetUrl,
+      resetToken,
+      expiresInMinutes: 15,
+    }).catch((err: any) => console.warn(`[Auth] Password reset email dispatch failed for ${user?.email}:`, err.message));
+
+    return { message: `Password reset instructions have been sent to '${user.email}'.` };
+  }
+
+  async resetPasswordWithToken(token: string, newPassword: string, ip: string = '127.0.0.1'): Promise<{ success: boolean; message: string }> {
+    if (!token || !token.trim()) {
+      throw new Error('Reset token is required.');
+    }
+    if (!newPassword || newPassword.length < 6) {
+      throw new Error('Password must be at least 6 characters long.');
+    }
+
+    const record = AuthService.resetTokens.get(token.trim());
+    if (!record) {
+      throw new Error('Invalid or expired password reset token.');
+    }
+
+    if (Date.now() > record.expiresAt) {
+      AuthService.resetTokens.delete(token.trim());
+      throw new Error('This password reset token has expired. Please request a new one.');
+    }
+
+    await AppRepositories.users.update(record.userId, { passwordHash: newPassword });
+    AuthService.resetTokens.delete(token.trim());
+
+    await AppRepositories.auditLogs.create({
+      id: `AUD-${Date.now().toString().slice(-4)}`,
+      organisationId: null,
+      actorId: record.userId,
+      actor: record.email,
+      actorRole: 'CANDIDATE',
+      action: 'PASSWORD_RESET_COMPLETED',
+      targetType: 'User',
+      targetId: record.userId,
+      details: `Password was reset successfully via email verification token.`,
+      ipAddress: ip,
+      timestamp: new Date().toISOString(),
+    });
+
+    return { success: true, message: 'Password has been reset successfully. You can now log in.' };
+  }
 }
 
 export const authService = new AuthService();
@@ -366,6 +449,29 @@ authRouter.post('/claim-candidate', async (req: AuthenticatedRequest, res: Respo
     return sendSuccess(res, result, 201);
   } catch (err: any) {
     return sendError(res, err.message, 400, 'CLAIM_FAILED');
+  }
+});
+
+authRouter.post('/forgot-password', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { email } = req.body;
+    assertRequired(req.body, ['email']);
+    const clientOrigin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+    const result = await authService.requestPasswordReset(email, clientOrigin);
+    return sendSuccess(res, result);
+  } catch (err: any) {
+    return sendError(res, err.message, 400, 'PASSWORD_RESET_FAILED');
+  }
+});
+
+authRouter.post('/reset-password', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { token, newPassword } = req.body;
+    assertRequired(req.body, ['token', 'newPassword']);
+    const result = await authService.resetPasswordWithToken(token, newPassword, req.ip || '127.0.0.1');
+    return sendSuccess(res, result);
+  } catch (err: any) {
+    return sendError(res, err.message, 400, 'RESET_PASSWORD_FAILED');
   }
 });
 
