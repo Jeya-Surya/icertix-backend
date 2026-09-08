@@ -293,9 +293,36 @@ export class AuthService {
     }
 
     if (existingUser) {
-      throw new Error(
-        `This candidate account has already been claimed and activated with a secure private password. You cannot change or reset your password using the claim page. Please sign in with your credentials or contact your institution administrator.`
-      );
+      // Check if user has already set a custom private password
+      // If the password is still the default Student ID / Candidate ID, allow them to set their private password.
+      const isStillDefaultPassword =
+        (await AppRepositories.users.validatePassword(existingUser.email, enrolledStudentId)) !== null ||
+        (await AppRepositories.users.validatePassword(existingUser.email, candidate.id)) !== null;
+
+      if (!isStillDefaultPassword) {
+        throw new Error(
+          `This candidate account has already been claimed and activated with a secure private password. You cannot change or reset your password using the claim page. Please sign in with your credentials or contact your institution administrator.`
+        );
+      }
+
+      // Update the existing user record with the new secure private password
+      await AppRepositories.users.update(existingUser.id, { passwordHash: newPassword });
+
+      await AppRepositories.auditLogs.create({
+        id: `AUD-${Date.now().toString().slice(-4)}`,
+        organisationId: candidate.organisationId,
+        actorId: existingUser.id,
+        actor: existingUser.name,
+        actorRole: 'CANDIDATE',
+        action: 'CANDIDATE_ACCOUNT_CLAIMED',
+        targetType: 'Candidate',
+        targetId: candidate.id,
+        details: `Candidate account claimed and secured with private password for Candidate ID '${enrolledStudentId}'.`,
+        ipAddress: ip,
+        timestamp: new Date().toISOString()
+      });
+
+      return { user: existingUser, token: existingUser.id };
     }
 
     // 4. Create candidate user with the chosen private password

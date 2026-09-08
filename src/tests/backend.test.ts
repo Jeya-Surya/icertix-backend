@@ -136,13 +136,12 @@ export async function runBackendTests(): Promise<{
 
   // 6. Student Candidate Account Claim & Private Password Security Tests
   const runUid = Date.now().toString().slice(-6);
+  const orgId = `ORG_MIT_${runUid}`;
   const studentEmail = `student_${runUid}@mit.edu`;
   const studentId = `ST-${runUid}`;
   const privatePassword = "SecretStudentPass#2026";
 
   await test("Candidate Auth: Enrolled student can claim account and set private password", async () => {
-    const orgId = `ORG_MIT_${runUid}`;
-
     // Setup candidate
     await AppRepositories.organisations.create({
       id: orgId,
@@ -187,14 +186,77 @@ export async function runBackendTests(): Promise<{
     }
   });
 
-  await test("Candidate Auth: Cannot re-claim account or create new password with Student ID once claimed", async () => {
+  // Candidate Auth Lifecycle: Repeated Default Logins -> Claim Private Password -> Exclusive Private Password Login
+  const student2Uid = (parseInt(runUid, 10) + 1).toString();
+  const student2Id = `STU_REPEAT_${student2Uid}`;
+  const student2Email = `repeat.student.${student2Uid}@mit.edu`;
+  const student2PrivatePass = "MyNewPrivatePass@2026!";
+
+  await test("Candidate Auth: Enrolled student can login multiple (N) times with Student ID as password", async () => {
+    // Enroll Candidate in the created organization
+    await AppRepositories.candidates.create({
+      id: `CAN_REP_${student2Uid}`,
+      organisationId: orgId,
+      name: "Maria Garcia",
+      email: student2Email,
+      studentId: student2Id,
+      department: "Engineering",
+      status: "Active",
+      enrolledCourseIds: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    // 1st login: Student ID as username + Student ID as password
+    const res1 = await authService.login(student2Id, student2Id);
+    if (!res1.user || res1.user.role !== "CANDIDATE") throw new Error("1st login with Student ID + Student ID failed");
+
+    // 2nd login: Student Email as username + Student ID as password
+    const res2 = await authService.login(student2Email, student2Id);
+    if (!res2.user || res2.user.role !== "CANDIDATE") throw new Error("2nd login with Email + Student ID failed");
+
+    // 3rd login: Student ID as username + Student ID as password
+    const res3 = await authService.login(student2Id, student2Id);
+    if (!res3.user || res3.user.role !== "CANDIDATE") throw new Error("3rd login with Student ID + Student ID failed");
+  });
+
+  await test("Candidate Auth: Student can subsequently visit Claims page to set a new private password", async () => {
+    const claimRes = await authService.claimCandidateAccount({
+      email: student2Email,
+      studentId: student2Id,
+      newPassword: student2PrivatePass,
+      name: "Maria Garcia"
+    });
+
+    if (!claimRes.user || claimRes.user.role !== "CANDIDATE") {
+      throw new Error("Claiming private password after repeated default logins failed");
+    }
+  });
+
+  await test("Candidate Auth: Once private password is set, Student ID as password is permanently blocked", async () => {
+    try {
+      await authService.login(student2Email, student2Id);
+      throw new Error("Should not allow logging in with Student ID as password after private password is set");
+    } catch (err: any) {
+      if (err.message.includes("Should not allow")) throw err;
+    }
+
+    try {
+      await authService.login(student2Id, student2Id);
+      throw new Error("Should not allow logging in with Student ID as password after private password is set");
+    } catch (err: any) {
+      if (err.message.includes("Should not allow")) throw err;
+    }
+  });
+
+  await test("Candidate Auth: Claims page blocks re-claiming once private password is set", async () => {
     try {
       await authService.claimCandidateAccount({
-        email: studentEmail,
-        studentId: studentId,
-        newPassword: "AnotherNewPassword123"
+        email: student2Email,
+        studentId: student2Id,
+        newPassword: "AnotherPassword@999"
       });
-      throw new Error("Should have blocked second claim attempt");
+      throw new Error("Should have blocked re-claiming account");
     } catch (err: any) {
       if (err.message.includes("Should have blocked")) throw err;
       if (!err.message.includes("already been claimed")) {
@@ -203,26 +265,17 @@ export async function runBackendTests(): Promise<{
     }
   });
 
-  await test("Candidate Auth: Cannot log in using Student ID as password once private password is created", async () => {
-    try {
-      await authService.login(studentEmail, studentId);
-      throw new Error("Should not allow logging in with student ID as password");
-    } catch (err: any) {
-      if (err.message.includes("Should not allow")) throw err;
+  await test("Candidate Auth: Candidate logs in successfully using Student ID as ID and new private password", async () => {
+    const res = await authService.login(student2Id, student2PrivatePass);
+    if (!res.user || res.user.role !== "CANDIDATE") {
+      throw new Error("Login with Student ID + new private password failed");
     }
   });
 
-  await test("Candidate Auth: Login succeeds using Student ID as username with private password", async () => {
-    const res = await authService.login(studentId, privatePassword);
+  await test("Candidate Auth: Candidate logs in successfully using Email as ID and new private password", async () => {
+    const res = await authService.login(student2Email, student2PrivatePass);
     if (!res.user || res.user.role !== "CANDIDATE") {
-      throw new Error("Login with Student ID + private password failed");
-    }
-  });
-
-  await test("Candidate Auth: Login succeeds using Student Email with private password", async () => {
-    const res = await authService.login(studentEmail, privatePassword);
-    if (!res.user || res.user.role !== "CANDIDATE") {
-      throw new Error("Login with Student Email + private password failed");
+      throw new Error("Login with Email + new private password failed");
     }
   });
 
