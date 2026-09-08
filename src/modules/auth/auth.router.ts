@@ -172,8 +172,11 @@ export class AuthService {
       badgeColor: '#0A2540',
       plan: 'Free',
       status: 'ACTIVE',
-      certificateQuota: { used: 0, total: 100 },
-      features: {
+      certificateQuota: { 
+        used: 0, 
+        total: (await AppRepositories.subscriptions.findPlanByTier('Free'))?.certificateQuota || 100 
+      },
+      features: (await AppRepositories.subscriptions.findPlanByTier('Free'))?.features || {
         apiAccess: false,
         whiteLabel: false,
         customDomain: false,

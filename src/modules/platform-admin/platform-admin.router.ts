@@ -195,7 +195,9 @@ platformAdminRouter.post('/organisations', async (req: AuthenticatedRequest, res
     }
 
     const orgId = `ORG_${Date.now().toString().slice(-4)}`;
-    const quotaTotal = certificateQuota?.total || (plan === 'Enterprise' ? 5000 : plan === 'Professional' ? 1000 : 100);
+    const planTier = plan || 'Professional';
+    const planDetails = await AppRepositories.subscriptions.findPlanByTier(planTier);
+    const quotaTotal = certificateQuota?.total || planDetails?.certificateQuota || (planTier === 'Enterprise' ? 10000 : planTier === 'Professional' ? 1000 : 100);
 
     const firstTwoLetters = name.replace(/[^a-zA-Z0-9]/g, '').slice(0, 2).toUpperCase() || 'OG';
     const finalCode = (code && code.trim()) ? code.trim().toUpperCase() : firstTwoLetters;
@@ -209,15 +211,15 @@ platformAdminRouter.post('/organisations', async (req: AuthenticatedRequest, res
       department: department || 'Executive Studies',
       logo,
       badgeColor: badgeColor || '#0A2540',
-      plan: plan || 'Professional',
+      plan: planTier,
       status: 'ACTIVE',
       certificateQuota: { used: 0, total: quotaTotal },
-      features: {
+      features: planDetails?.features || {
         apiAccess: true,
-        whiteLabel: plan === 'Enterprise',
-        customDomain: plan === 'Enterprise',
-        sso: plan === 'Enterprise',
-        maxTemplates: plan === 'Enterprise' ? 25 : 10
+        whiteLabel: planTier === 'Enterprise',
+        customDomain: planTier === 'Enterprise',
+        sso: planTier === 'Enterprise',
+        maxTemplates: planTier === 'Enterprise' ? 50 : 10
       },
       signatories: [
         { id: `SIG-${code}-01`, name: 'Dean of Academic Affairs', role: 'Dean & Provost', keyId: `KEY-${code}-01` }
@@ -262,13 +264,27 @@ platformAdminRouter.patch('/organisations/:id', async (req: AuthenticatedRequest
     if (code) updates.code = code.toUpperCase();
     if (domain) updates.domain = domain;
     if (department !== undefined) updates.department = department;
-    if (plan) updates.plan = plan;
     if (badgeColor) updates.badgeColor = badgeColor;
     if (status) updates.status = status;
+    
+    if (plan) {
+      updates.plan = plan;
+      const planDetails = await AppRepositories.subscriptions.findPlanByTier(plan);
+      if (planDetails) {
+        if (!certificateQuota || certificateQuota.total === undefined) {
+          updates.certificateQuota = {
+            used: certificateQuota?.used !== undefined ? certificateQuota.used : existing.certificateQuota.used,
+            total: planDetails.certificateQuota
+          };
+        }
+        updates.features = planDetails.features;
+      }
+    }
+
     if (certificateQuota) {
       updates.certificateQuota = {
-        used: certificateQuota.used !== undefined ? certificateQuota.used : existing.certificateQuota.used,
-        total: certificateQuota.total !== undefined ? certificateQuota.total : existing.certificateQuota.total
+        used: certificateQuota.used !== undefined ? certificateQuota.used : (updates.certificateQuota?.used ?? existing.certificateQuota.used),
+        total: certificateQuota.total !== undefined ? certificateQuota.total : (updates.certificateQuota?.total ?? existing.certificateQuota.total)
       };
     }
 
@@ -683,6 +699,27 @@ platformAdminRouter.patch('/subscriptions/plans/:id', async (req: AuthenticatedR
 
     const updated = await AppRepositories.subscriptions.updatePlan(planId, updates);
     if (!updated) return sendError(res, 'Subscription plan not found.', 404);
+
+    // Cascade plan updates (quota & features) to all tenant organisations on this plan tier
+    if (updates.certificateQuota !== undefined || updates.features !== undefined) {
+      try {
+        const orgsResult = await AppRepositories.organisations.findAll({ page: 1, limit: 1000 });
+        const orgs = orgsResult.items || [];
+        for (const org of orgs) {
+          if ((org.plan || '').toLowerCase() === (updated.tier || '').toLowerCase()) {
+            await AppRepositories.organisations.update(org.id, {
+              certificateQuota: {
+                used: org.certificateQuota?.used || 0,
+                total: updates.certificateQuota !== undefined ? updates.certificateQuota : (org.certificateQuota?.total || 100)
+              },
+              ...(updates.features ? { features: { ...org.features, ...updates.features } } : {})
+            });
+          }
+        }
+      } catch (cascadeErr) {
+        console.warn('Failed to cascade plan updates to tenant orgs:', cascadeErr);
+      }
+    }
 
     await AppRepositories.auditLogs.create({
       id: `AUD-${Date.now().toString().slice(-4)}`,

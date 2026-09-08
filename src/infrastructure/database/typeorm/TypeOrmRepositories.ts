@@ -1037,7 +1037,7 @@ export class TypeOrmSubscriptionRepository implements ISubscriptionRepository {
       }
       return SEED_SUBSCRIPTION_PLANS;
     }
-    return list.map((p) => ({
+    const plans = list.map((p) => ({
       id: p.id,
       name: p.name,
       tier: p.tier,
@@ -1046,6 +1046,13 @@ export class TypeOrmSubscriptionRepository implements ISubscriptionRepository {
       certificateQuota: p.certificateQuota,
       features: p.features,
     }));
+
+    const tierOrder: Record<string, number> = { free: 1, professional: 2, enterprise: 3 };
+    return plans.sort(
+      (a, b) =>
+        (tierOrder[a.tier.toLowerCase()] || 99) -
+        (tierOrder[b.tier.toLowerCase()] || 99),
+    );
   }
 
   async findPlanByTier(tier: string): Promise<SubscriptionPlan | null> {

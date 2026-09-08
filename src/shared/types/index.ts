@@ -324,26 +324,48 @@ export interface VerificationResult {
   status: CredentialStatus;
   credential: {
     id: string;
+    credentialId?: string;
     certificateNumber: string;
+    candidateId?: string;
     candidateName: string;
     candidateEmail?: string;
+    courseId?: string;
     courseName: string;
     courseCode?: string;
+    organisationId?: string;
     organisationName: string;
     organisationCode: string;
     department?: string;
+    templateId?: string;
+    templateVersionId?: string;
+    designSchema?: any;
+    recipient?: {
+      name: string;
+      email: string;
+      studentId?: string;
+    };
+    issuer?: {
+      name: string;
+      department?: string;
+      code: string;
+      verifiedDomain?: string;
+      logo?: string;
+    };
     issueDate: string;
     completionDate: string;
     expiryDate?: string | null;
     score?: string;
     grade?: string;
     skills?: string[];
+    description?: string;
     verificationUrl: string;
     hashDigest: string;
     signatories: OrganisationSignatory[];
     signatureData: CredentialSignatureMetadata;
     revocationReason?: string;
     revokedAt?: string;
+    createdAt?: string;
+    updatedAt?: string;
   } | null;
   checkedAt: string;
   checks: VerificationCheck[];

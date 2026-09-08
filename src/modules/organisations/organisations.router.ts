@@ -37,6 +37,15 @@ organisationsRouter.get('/me', async (req: AuthenticatedRequest, res: Response) 
     const orgId = req.tenantId || 'ORG_001';
     const org = await AppRepositories.organisations.findById(orgId);
     if (!org) return sendError(res, 'Organisation not found.', 404);
+
+    try {
+      const creds = await AppRepositories.credentials.findAll(orgId, { page: 1, limit: 1000 });
+      const actualCount = creds.total || creds.items?.length || 0;
+      if (org.certificateQuota) {
+        org.certificateQuota.used = Math.max(org.certificateQuota.used || 0, actualCount);
+      }
+    } catch {}
+
     return sendSuccess(res, org);
   } catch (err: any) {
     return sendError(res, err.message);
@@ -53,6 +62,15 @@ organisationsRouter.get('/:id', async (req: AuthenticatedRequest, res: Response)
 
     const org = await AppRepositories.organisations.findById(targetId);
     if (!org) return sendError(res, 'Organisation not found.', 404);
+
+    try {
+      const creds = await AppRepositories.credentials.findAll(targetId, { page: 1, limit: 1000 });
+      const actualCount = creds.total || creds.items?.length || 0;
+      if (org.certificateQuota) {
+        org.certificateQuota.used = Math.max(org.certificateQuota.used || 0, actualCount);
+      }
+    } catch {}
+
     return sendSuccess(res, org);
   } catch (err: any) {
     return sendError(res, err.message);
@@ -106,13 +124,14 @@ organisationsRouter.post('/:id/plan', async (req: AuthenticatedRequest, res: Res
     const org = await AppRepositories.organisations.findById(targetId);
     if (!org) return sendError(res, 'Organisation not found.', 404);
 
-    const quotaMap: Record<string, number> = {
+    const planDetails = await AppRepositories.subscriptions.findPlanByTier(plan);
+    const fallbackQuotaMap: Record<string, number> = {
       Free: 100,
       Professional: 1000,
       Enterprise: 50000
     };
 
-    const newQuotaTotal = quotaMap[plan] || 100;
+    const newQuotaTotal = planDetails?.certificateQuota ?? fallbackQuotaMap[plan] ?? 100;
     const currentUsed = org.certificateQuota?.used || 0;
 
     const updated = await AppRepositories.organisations.update(targetId, {
@@ -121,7 +140,7 @@ organisationsRouter.post('/:id/plan', async (req: AuthenticatedRequest, res: Res
         used: currentUsed,
         total: newQuotaTotal
       },
-      features: {
+      features: planDetails?.features || {
         apiAccess: plan !== 'Free',
         whiteLabel: plan === 'Enterprise',
         customDomain: plan !== 'Free',

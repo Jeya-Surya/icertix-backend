@@ -759,7 +759,12 @@ export class InMemorySubscriptionRepository implements ISubscriptionRepository {
   }
 
   async findAllPlans(): Promise<SubscriptionPlan[]> {
-    return Array.from(this.plans.values());
+    const tierOrder: Record<string, number> = { free: 1, professional: 2, enterprise: 3 };
+    return Array.from(this.plans.values()).sort(
+      (a, b) =>
+        (tierOrder[a.tier.toLowerCase()] || 99) -
+        (tierOrder[b.tier.toLowerCase()] || 99),
+    );
   }
 
   async findPlanByTier(tier: string): Promise<SubscriptionPlan | null> {
