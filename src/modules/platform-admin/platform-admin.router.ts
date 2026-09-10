@@ -31,9 +31,11 @@ platformAdminRouter.get('/metrics', async (_req: AuthenticatedRequest, res: Resp
 
     const activeOrgs = orgs.items.filter(o => o.status === 'ACTIVE' || !o.status).length;
     const suspendedOrgs = orgs.items.filter(o => o.status === 'SUSPENDED').length;
-    const totalIssued = credentials.items.length;
+    const totalIssued = credentials.total;
     const totalRevoked = credentials.items.filter(c => c.status === 'REVOKED').length;
     const totalActive = credentials.items.filter(c => c.status === 'ACTIVE').length;
+    const totalValid = totalIssued - totalRevoked;
+    const rate = totalIssued > 0 ? ((totalValid / totalIssued) * 100).toFixed(2) + '%' : '100.0%';
 
     return sendSuccess(res, {
       totalOrganisations: orgs.total,
@@ -43,7 +45,7 @@ platformAdminRouter.get('/metrics', async (_req: AuthenticatedRequest, res: Resp
       totalCredentials: totalIssued,
       activeCredentials: totalActive,
       revokedCredentials: totalRevoked,
-      verificationSuccessRate: '99.98%',
+      verificationSuccessRate: rate,
       systemStatus: 'HEALTHY',
       recentAudits: auditLogs.items
     });
@@ -63,7 +65,7 @@ platformAdminRouter.get('/analytics', async (req: AuthenticatedRequest, res: Res
     const orgs = await AppRepositories.organisations.findAll({ limit: 1000 });
     const credentials = await AppRepositories.credentials.findAll(null, { limit: 1000 });
     const users = await AppRepositories.users.findAll(null, { limit: 1000 });
-    const emailLogs = await AppRepositories.emailLogs.findAll('', { limit: 1000 });
+    const emailLogs = await AppRepositories.emailLogs.findAll(null, { limit: 1000 });
 
     const days = timeframe === '7d' ? 7 : timeframe === '90d' ? 90 : timeframe === '1y' ? 365 : 30;
     const now = new Date();
@@ -643,6 +645,71 @@ platformAdminRouter.get('/credentials', async (req: AuthenticatedRequest, res: R
   }
 });
 
+// POST /api/platform/credentials/sync - Sync credentials platform-wide
+platformAdminRouter.post('/credentials/sync', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rawList = Array.isArray(req.body) ? req.body : (Array.isArray(req.body?.credentials) ? req.body.credentials : [req.body]);
+    const saved: any[] = [];
+    for (const raw of rawList) {
+      if (!raw) continue;
+      const credId = raw.credentialId || raw.id || `ICX-2026-${Math.random().toString(16).slice(2, 10).toUpperCase()}`;
+      const certNum = raw.certificateNumber || `CERT-ICX-2026-${Math.floor(100000 + Math.random() * 900000)}`;
+      const candidateName = raw.candidateName || raw.recipient?.name || 'Enrolled Candidate';
+      const candidateEmail = raw.candidateEmail || raw.recipient?.email || 'candidate@institution.edu';
+      const candidateId = raw.candidateId || raw.recipient?.studentId || `CAN_${Date.now().toString().slice(-4)}`;
+      const courseName = raw.courseName || raw.title || 'Certificate Program';
+      const courseId = raw.courseId || raw.templateId || 'CRS_001';
+      const templateId = raw.templateId || 'TPL_001';
+      const orgId = raw.organisationId || raw.issuer?.id || 'ORG_001';
+      const hashDigest = raw.hashDigest || raw.crypto?.sha256Hash || 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+
+      const cred = {
+        id: credId,
+        certificateNumber: certNum,
+        organisationId: orgId,
+        candidateId,
+        candidateName,
+        candidateEmail,
+        courseId,
+        courseName,
+        templateId,
+        templateVersionId: raw.templateVersionId || 'VER_001',
+        issueDate: raw.issueDate || new Date().toISOString().split('T')[0],
+        completionDate: raw.completionDate || raw.issueDate || new Date().toISOString().split('T')[0],
+        expiryDate: raw.expiryDate || null,
+        status: (raw.status || 'ACTIVE').toUpperCase(),
+        score: raw.score != null ? String(raw.score) : '98%',
+        grade: raw.grade || 'Honors & Distinction',
+        skills: Array.isArray(raw.skills) ? raw.skills : ['Core Competency'],
+        description: raw.description || `Conferred upon ${candidateName}.`,
+        verificationUrl: raw.verificationUrl || `/verify/${credId}`,
+        hashDigest,
+        signatureData: raw.signatureData || (raw.crypto ? {
+          algorithm: raw.crypto.signatureAlgorithm || 'Ed25519-HMAC',
+          signatureHex: raw.crypto.signatureHex || 'sig_hex_placeholder',
+          keyId: raw.crypto.keyId || 'KEY-PRIMARY-01',
+          signedAt: raw.crypto.signedAt || new Date().toISOString(),
+          canonicalPayloadJson: raw.crypto.canonicalPayloadJson || '{}'
+        } : {
+          algorithm: 'Ed25519-HMAC',
+          signatureHex: 'sig_placeholder',
+          keyId: 'KEY-PRIMARY-01',
+          signedAt: new Date().toISOString(),
+          canonicalPayloadJson: '{}'
+        }),
+        createdAt: raw.createdAt || new Date().toISOString()
+      };
+
+      const created = await AppRepositories.credentials.create(cred as any);
+      saved.push(created);
+    }
+
+    return sendSuccess(res, { count: saved.length, items: saved });
+  } catch (err: any) {
+    return sendError(res, err.message);
+  }
+});
+
 // POST /api/platform/credentials/:id/revoke - Revoke any credential platform-wide
 platformAdminRouter.post('/credentials/:id/revoke', async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -787,6 +854,28 @@ platformAdminRouter.patch('/settings', async (req: AuthenticatedRequest, res: Re
 // ==========================================
 // 8. EMAIL LOGS & RESEND
 // ==========================================
+
+// GET /api/platform/emails - List all email logs platform-wide
+platformAdminRouter.get('/emails', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const search = req.query.search as string;
+    const status = req.query.status as string;
+    const organisationId = req.query.organisationId as string;
+
+    const result = await AppRepositories.emailLogs.findAll(organisationId || null, {
+      page,
+      limit,
+      search,
+      status: status && status !== 'ALL' ? status : undefined
+    });
+
+    return sendPaginated(res, result);
+  } catch (err: any) {
+    return sendError(res, err.message);
+  }
+});
 
 // POST /api/platform/emails/resend
 platformAdminRouter.post('/emails/resend', async (req: AuthenticatedRequest, res: Response) => {

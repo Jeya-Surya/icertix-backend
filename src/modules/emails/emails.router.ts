@@ -15,13 +15,14 @@ emailsRouter.use(authMiddleware);
 // GET /api/emails - List email delivery logs
 emailsRouter.get('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const orgId = req.tenantId || 'ORG_001';
+    const isSuperAdmin = req.userRole === 'SUPER_ADMIN';
+    const orgId = isSuperAdmin ? ((req.query.organisationId as string) || null) : (req.tenantId || 'ORG_001');
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 50;
     const search = req.query.search as string;
     const status = req.query.status as string;
 
-    const result = await AppRepositories.emailLogs.findAll(orgId, { page, limit, search, status });
+    const result = await AppRepositories.emailLogs.findAll(orgId, { page, limit, search, status: status && status !== 'ALL' ? status : undefined });
     return sendPaginated(res, result);
   } catch (err: any) {
     return sendError(res, err.message);

@@ -24,7 +24,7 @@ import {
 } from '../../../shared/types';
 
 export interface IOrganisationRepository {
-  findAll(params?: PaginationParams): Promise<PaginatedResult<Organisation>>;
+  findAll(params?: PaginationParams & { search?: string; status?: string }): Promise<PaginatedResult<Organisation>>;
   findById(id: string): Promise<Organisation | null>;
   findByCode(code: string): Promise<Organisation | null>;
   create(org: Organisation): Promise<Organisation>;
@@ -33,7 +33,7 @@ export interface IOrganisationRepository {
 }
 
 export interface IUserRepository {
-  findAll(orgId?: string | null, params?: PaginationParams): Promise<PaginatedResult<AuthUser>>;
+  findAll(orgId?: string | null, params?: PaginationParams & { role?: string; status?: string; search?: string }): Promise<PaginatedResult<AuthUser>>;
   findById(id: string): Promise<AuthUser | null>;
   findByEmail(email: string): Promise<AuthUser | null>;
   create(user: AuthUser, passwordHash?: string): Promise<AuthUser>;
@@ -43,7 +43,7 @@ export interface IUserRepository {
 }
 
 export interface ICandidateRepository {
-  findAll(orgId: string, params?: PaginationParams & { department?: string; status?: string }): Promise<PaginatedResult<Candidate>>;
+  findAll(orgId?: string | null, params?: PaginationParams & { department?: string; status?: string; search?: string }): Promise<PaginatedResult<Candidate>>;
   findById(orgId: string, id: string): Promise<Candidate | null>;
   findByEmail(orgId: string, email: string): Promise<Candidate | null>;
   findByStudentId(orgId: string, studentId: string): Promise<Candidate | null>;
@@ -62,7 +62,7 @@ export interface IDepartmentRepository {
 }
 
 export interface ICourseRepository {
-  findAll(orgId: string, params?: PaginationParams & { category?: string }): Promise<PaginatedResult<Course>>;
+  findAll(orgId: string, params?: PaginationParams & { category?: string; search?: string }): Promise<PaginatedResult<Course>>;
   findById(orgId: string, id: string): Promise<Course | null>;
   findByCode(orgId: string, code: string): Promise<Course | null>;
   create(course: Course): Promise<Course>;
@@ -84,7 +84,7 @@ export interface ITemplateRepository {
 }
 
 export interface ICredentialRepository {
-  findAll(orgId?: string | null, params?: PaginationParams & { status?: string; courseId?: string; candidateId?: string }): Promise<PaginatedResult<Credential>>;
+  findAll(orgId?: string | null, params?: PaginationParams & { status?: string; courseId?: string; candidateId?: string; search?: string }): Promise<PaginatedResult<Credential>>;
   findById(id: string): Promise<Credential | null>;
   findByCertificateNumber(certNum: string): Promise<Credential | null>;
   findByCandidate(candidateId: string): Promise<Credential[]>;
@@ -101,15 +101,15 @@ export interface ICertificateJobRepository {
 }
 
 export interface IAuditLogRepository {
-  findAll(orgId?: string | null, params?: PaginationParams & { action?: string; actor?: string }): Promise<PaginatedResult<AuditLog>>;
+  findAll(orgId?: string | null, params?: PaginationParams & { action?: string; actor?: string; search?: string }): Promise<PaginatedResult<AuditLog>>;
   create(log: AuditLog): Promise<AuditLog>;
 }
 
 export interface IEmailLogRepository {
-  findAll(orgId: string, params?: PaginationParams & { status?: string }): Promise<PaginatedResult<EmailLog>>;
-  findById(orgId: string, id: string): Promise<EmailLog | null>;
+  findAll(orgId?: string | null, params?: PaginationParams & { status?: string; search?: string }): Promise<PaginatedResult<EmailLog>>;
+  findById(orgId: string | null | undefined, id: string): Promise<EmailLog | null>;
   create(log: EmailLog): Promise<EmailLog>;
-  update(orgId: string, id: string, updates: Partial<EmailLog>): Promise<EmailLog | null>;
+  update(orgId: string | null | undefined, id: string, updates: Partial<EmailLog>): Promise<EmailLog | null>;
 }
 
 export interface ISubscriptionRepository {

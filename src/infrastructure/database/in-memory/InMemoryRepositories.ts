@@ -702,16 +702,17 @@ export class InMemoryEmailLogRepository implements IEmailLogRepository {
   }
 
   async findAll(
-    orgId: string,
-    params?: PaginationParams & { status?: string },
+    orgId?: string | null,
+    params?: PaginationParams & { status?: string; search?: string },
   ): Promise<PaginatedResult<EmailLog>> {
-    let list = Array.from(this.logs.values()).filter(
-      (l) => l.organisationId === orgId,
-    );
-    if (params?.status) {
+    let list = Array.from(this.logs.values());
+    if (orgId && orgId.trim() !== '') {
+      list = list.filter((l) => l.organisationId === orgId);
+    }
+    if (params?.status && params.status !== 'ALL') {
       list = list.filter((l) => l.status === params.status);
     }
-    if (params?.search) {
+    if (params?.search && params.search.trim() !== '') {
       const q = params.search.toLowerCase();
       list = list.filter(
         (l) =>
@@ -727,9 +728,10 @@ export class InMemoryEmailLogRepository implements IEmailLogRepository {
     return paginate(list, params);
   }
 
-  async findById(orgId: string, id: string): Promise<EmailLog | null> {
+  async findById(orgId: string | null | undefined, id: string): Promise<EmailLog | null> {
     const l = this.logs.get(id);
-    if (!l || l.organisationId !== orgId) return null;
+    if (!l) return null;
+    if (orgId && orgId.trim() !== '' && l.organisationId !== orgId) return null;
     return l;
   }
 
@@ -739,7 +741,7 @@ export class InMemoryEmailLogRepository implements IEmailLogRepository {
   }
 
   async update(
-    orgId: string,
+    orgId: string | null | undefined,
     id: string,
     updates: Partial<EmailLog>,
   ): Promise<EmailLog | null> {

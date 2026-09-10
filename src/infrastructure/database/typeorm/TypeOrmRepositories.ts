@@ -51,15 +51,28 @@ export class TypeOrmOrganisationRepository implements IOrganisationRepository {
   }
 
   async findAll(
-    params?: PaginationParams,
+    params?: PaginationParams & { search?: string; status?: string },
   ): Promise<PaginatedResult<Organisation>> {
     const page = Math.max(1, params?.page || 1);
     const limit = Math.max(1, Math.min(100, params?.limit || 20));
-    const [items, total] = await this.repo.findAndCount({
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { createdAt: "DESC" },
-    });
+    const qb = this.repo.createQueryBuilder("o");
+
+    if (params?.status && params.status !== "ALL") {
+      qb.andWhere("o.status = :status", { status: params.status });
+    }
+    if (params?.search && params.search.trim() !== "") {
+      const q = `%${params.search.toLowerCase()}%`;
+      qb.andWhere(
+        "(LOWER(o.name) LIKE :q OR LOWER(o.code) LIKE :q OR LOWER(o.domain) LIKE :q OR LOWER(o.department) LIKE :q)",
+        { q },
+      );
+    }
+
+    qb.orderBy("o.createdAt", "DESC")
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const [items, total] = await qb.getManyAndCount();
     const totalPages = Math.ceil(total / limit) || 1;
     return {
       items: items.map(this.toDomain),
@@ -151,20 +164,34 @@ export class TypeOrmUserRepository implements IUserRepository {
 
   async findAll(
     orgId?: string | null,
-    params?: PaginationParams,
+    params?: PaginationParams & { role?: string; status?: string; search?: string },
   ): Promise<PaginatedResult<AuthUser>> {
     const page = Math.max(1, params?.page || 1);
     const limit = Math.max(1, Math.min(100, params?.limit || 20));
-    const whereClause: any = {};
-    if (orgId !== undefined && orgId !== null) {
-      whereClause.organisationId = orgId;
+    const qb = this.repo.createQueryBuilder("u");
+
+    if (orgId && orgId.trim() !== "") {
+      qb.andWhere("u.organisationId = :orgId", { orgId });
     }
-    const [items, total] = await this.repo.findAndCount({
-      where: whereClause,
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { createdAt: "DESC" },
-    });
+    if (params?.role && params.role !== "ALL") {
+      qb.andWhere("u.role = :role", { role: params.role });
+    }
+    if (params?.status && params.status !== "ALL") {
+      qb.andWhere("u.status = :status", { status: params.status });
+    }
+    if (params?.search && params.search.trim() !== "") {
+      const q = `%${params.search.toLowerCase()}%`;
+      qb.andWhere(
+        "(LOWER(u.name) LIKE :q OR LOWER(u.email) LIKE :q OR LOWER(u.title) LIKE :q)",
+        { q },
+      );
+    }
+
+    qb.orderBy("u.createdAt", "DESC")
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const [items, total] = await qb.getManyAndCount();
     const totalPages = Math.ceil(total / limit) || 1;
     return {
       items: items.map(this.toDomain),
@@ -297,21 +324,35 @@ export class TypeOrmCandidateRepository implements ICandidateRepository {
   }
 
   async findAll(
-    orgId: string,
-    params?: PaginationParams & { department?: string; status?: string },
+    orgId?: string | null,
+    params?: PaginationParams & { department?: string; status?: string; search?: string },
   ): Promise<PaginatedResult<Candidate>> {
     const page = Math.max(1, params?.page || 1);
     const limit = Math.max(1, Math.min(100, params?.limit || 20));
-    const where: any = { organisationId: orgId };
-    if (params?.department) where.department = params.department;
-    if (params?.status) where.status = params.status;
+    const qb = this.repo.createQueryBuilder("cand");
 
-    const [items, total] = await this.repo.findAndCount({
-      where,
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { createdAt: "DESC" },
-    });
+    if (orgId && orgId.trim() !== "") {
+      qb.andWhere("cand.organisationId = :orgId", { orgId });
+    }
+    if (params?.department && params.department !== "ALL") {
+      qb.andWhere("cand.department = :department", { department: params.department });
+    }
+    if (params?.status && params.status !== "ALL") {
+      qb.andWhere("cand.status = :status", { status: params.status });
+    }
+    if (params?.search && params.search.trim() !== "") {
+      const q = `%${params.search.toLowerCase()}%`;
+      qb.andWhere(
+        "(LOWER(cand.name) LIKE :q OR LOWER(cand.email) LIKE :q OR LOWER(cand.studentId) LIKE :q)",
+        { q },
+      );
+    }
+
+    qb.orderBy("cand.createdAt", "DESC")
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const [items, total] = await qb.getManyAndCount();
     const totalPages = Math.ceil(total / limit) || 1;
     return {
       items: items.map(this.toDomain),
@@ -683,22 +724,38 @@ export class TypeOrmCredentialRepository implements ICredentialRepository {
       status?: string;
       courseId?: string;
       candidateId?: string;
+      search?: string;
     },
   ): Promise<PaginatedResult<Credential>> {
     const page = Math.max(1, params?.page || 1);
     const limit = Math.max(1, Math.min(100, params?.limit || 20));
-    const where: any = {};
-    if (orgId) where.organisationId = orgId;
-    if (params?.status) where.status = params.status;
-    if (params?.courseId) where.courseId = params.courseId;
-    if (params?.candidateId) where.candidateId = params.candidateId;
+    const qb = this.repo.createQueryBuilder("c");
 
-    const [items, total] = await this.repo.findAndCount({
-      where,
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { createdAt: "DESC" },
-    });
+    if (orgId && orgId.trim() !== "") {
+      qb.andWhere("c.organisationId = :orgId", { orgId });
+    }
+    if (params?.status && params.status !== "ALL") {
+      qb.andWhere("c.status = :status", { status: params.status });
+    }
+    if (params?.courseId) {
+      qb.andWhere("c.courseId = :courseId", { courseId: params.courseId });
+    }
+    if (params?.candidateId) {
+      qb.andWhere("c.candidateId = :candidateId", { candidateId: params.candidateId });
+    }
+    if (params?.search && params.search.trim() !== "") {
+      const q = `%${params.search.toLowerCase()}%`;
+      qb.andWhere(
+        "(LOWER(c.id) LIKE :q OR LOWER(c.certificateNumber) LIKE :q OR LOWER(c.candidateName) LIKE :q OR LOWER(c.candidateEmail) LIKE :q OR LOWER(c.courseName) LIKE :q)",
+        { q },
+      );
+    }
+
+    qb.orderBy("c.createdAt", "DESC")
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const [items, total] = await qb.getManyAndCount();
     const totalPages = Math.ceil(total / limit) || 1;
     return {
       items: items.map(this.toDomain),
@@ -730,6 +787,35 @@ export class TypeOrmCredentialRepository implements ICredentialRepository {
   }
 
   async create(cred: Credential): Promise<Credential> {
+    const existing = await this.repo.findOne({
+      where: [{ id: cred.id }, { certificateNumber: cred.certificateNumber }],
+    });
+
+    if (existing) {
+      existing.certificateNumber = cred.certificateNumber || existing.certificateNumber;
+      existing.organisationId = cred.organisationId || existing.organisationId;
+      existing.candidateId = cred.candidateId || existing.candidateId;
+      existing.candidateName = cred.candidateName || existing.candidateName;
+      existing.candidateEmail = cred.candidateEmail || existing.candidateEmail;
+      existing.courseId = cred.courseId || existing.courseId;
+      existing.courseName = cred.courseName || existing.courseName;
+      existing.templateId = cred.templateId || existing.templateId;
+      existing.templateVersionId = cred.templateVersionId || existing.templateVersionId;
+      existing.issueDate = cred.issueDate || existing.issueDate;
+      existing.completionDate = cred.completionDate || existing.completionDate;
+      existing.expiryDate = cred.expiryDate !== undefined ? cred.expiryDate : existing.expiryDate;
+      existing.status = (cred.status as any) || existing.status;
+      existing.score = cred.score || existing.score;
+      existing.grade = cred.grade || existing.grade;
+      existing.skills = cred.skills || existing.skills;
+      existing.description = cred.description || existing.description;
+      existing.verificationUrl = cred.verificationUrl || existing.verificationUrl;
+      existing.hashDigest = cred.hashDigest || existing.hashDigest;
+      existing.signatureData = cred.signatureData || existing.signatureData;
+      await this.repo.save(existing);
+      return this.toDomain(existing);
+    }
+
     const entity = this.repo.create({
       id: cred.id,
       certificateNumber: cred.certificateNumber,
@@ -886,20 +972,35 @@ export class TypeOrmAuditLogRepository implements IAuditLogRepository {
 
   async findAll(
     orgId?: string | null,
-    params?: PaginationParams & { action?: string; actor?: string },
+    params?: PaginationParams & { action?: string; actor?: string; search?: string },
   ): Promise<PaginatedResult<AuditLog>> {
     const page = Math.max(1, params?.page || 1);
     const limit = Math.max(1, Math.min(100, params?.limit || 50));
-    const where: any = {};
-    if (orgId) where.organisationId = orgId;
-    if (params?.action) where.action = params.action;
+    const qb = this.repo.createQueryBuilder("a");
 
-    const [items, total] = await this.repo.findAndCount({
-      where,
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { timestamp: "DESC" },
-    });
+    if (orgId && orgId.trim() !== "") {
+      qb.andWhere("a.organisationId = :orgId", { orgId });
+    }
+    if (params?.action && params.action !== "ALL") {
+      qb.andWhere("a.action = :action", { action: params.action });
+    }
+    if (params?.actor) {
+      const actorQ = `%${params.actor.toLowerCase()}%`;
+      qb.andWhere("LOWER(a.actor) LIKE :actorQ", { actorQ });
+    }
+    if (params?.search && params.search.trim() !== "") {
+      const q = `%${params.search.toLowerCase()}%`;
+      qb.andWhere(
+        "(LOWER(a.action) LIKE :q OR LOWER(a.actor) LIKE :q OR LOWER(a.details) LIKE :q)",
+        { q },
+      );
+    }
+
+    qb.orderBy("a.timestamp", "DESC")
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const [items, total] = await qb.getManyAndCount();
     const totalPages = Math.ceil(total / limit) || 1;
     return {
       items: items.map((e) => ({
@@ -946,20 +1047,32 @@ export class TypeOrmEmailLogRepository implements IEmailLogRepository {
   }
 
   async findAll(
-    orgId: string,
-    params?: PaginationParams & { status?: string },
+    orgId?: string | null,
+    params?: PaginationParams & { status?: string; search?: string },
   ): Promise<PaginatedResult<EmailLog>> {
     const page = Math.max(1, params?.page || 1);
     const limit = Math.max(1, Math.min(100, params?.limit || 50));
-    const where: any = { organisationId: orgId };
-    if (params?.status) where.status = params.status;
+    const qb = this.repo.createQueryBuilder("e");
 
-    const [items, total] = await this.repo.findAndCount({
-      where,
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { sentAt: "DESC" },
-    });
+    if (orgId && orgId.trim() !== "") {
+      qb.andWhere("e.organisationId = :orgId", { orgId });
+    }
+    if (params?.status && params.status !== "ALL") {
+      qb.andWhere("e.status = :status", { status: params.status });
+    }
+    if (params?.search && params.search.trim() !== "") {
+      const q = `%${params.search.toLowerCase()}%`;
+      qb.andWhere(
+        "(LOWER(e.recipientEmail) LIKE :q OR LOWER(e.recipientName) LIKE :q OR LOWER(e.subject) LIKE :q)",
+        { q },
+      );
+    }
+
+    qb.orderBy("e.sentAt", "DESC")
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const [items, total] = await qb.getManyAndCount();
     const totalPages = Math.ceil(total / limit) || 1;
     return {
       items: items.map((e) => ({
@@ -980,8 +1093,10 @@ export class TypeOrmEmailLogRepository implements IEmailLogRepository {
     };
   }
 
-  async findById(orgId: string, id: string): Promise<EmailLog | null> {
-    const e = await this.repo.findOneBy({ organisationId: orgId, id });
+  async findById(orgId: string | null | undefined, id: string): Promise<EmailLog | null> {
+    const where: any = { id };
+    if (orgId && orgId.trim() !== "") where.organisationId = orgId;
+    const e = await this.repo.findOneBy(where);
     return e
       ? {
           id: e.id,
@@ -1012,11 +1127,13 @@ export class TypeOrmEmailLogRepository implements IEmailLogRepository {
   }
 
   async update(
-    orgId: string,
+    orgId: string | null | undefined,
     id: string,
     updates: Partial<EmailLog>,
   ): Promise<EmailLog | null> {
-    await this.repo.update({ organisationId: orgId, id }, updates as any);
+    const where: any = { id };
+    if (orgId && orgId.trim() !== "") where.organisationId = orgId;
+    await this.repo.update(where, updates as any);
     return this.findById(orgId, id);
   }
 }
